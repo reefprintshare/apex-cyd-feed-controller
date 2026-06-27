@@ -1,0 +1,809 @@
+# DIY Apex CYD Feed Controller & Status Display
+#
+# Hardware:
+# - ESP32-2432S028 CYD
+# - 320 x 240 display in landscape orientation
+#
+# Before flashing:
+# 1. Copy secrets.example.yaml to secrets.yaml.
+# 2. Add your Wi-Fi, encrypted API key, and OTA password.
+# 3. Update Home Assistant entity IDs below if yours differ.
+# 4. Review touchscreen calibration values for your own CYD board.
+#
+# This file intentionally contains no Apex IP address, Apex credentials,
+# Home Assistant URL, static IP address, or personal device details.
+
+esphome:
+  name: apex-cyd-feed-panel
+  friendly_name: Apex Feed Panel
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+spi:
+  - id: tft_spi
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+
+  - id: touch_spi
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    id: screen_backlight
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 19
+
+  - file: "gfonts://Roboto"
+    id: font_header_side
+    size: 12
+
+  - file: "gfonts://Roboto"
+    id: font_status
+    size: 12
+
+  - file: "gfonts://Roboto@700"
+    id: font_button
+    size: 15
+
+  - file: "gfonts://Roboto"
+    id: font_message
+    size: 11
+
+color:
+  - id: color_bg
+    hex: "10212B"
+
+  - id: color_header
+    hex: "F57C00"
+
+  - id: color_header_outline
+    hex: "FFB74D"
+
+  - id: color_fusion_button
+    hex: "1976D2"
+
+  - id: color_fusion_outline
+    hex: "64B5F6"
+
+  - id: color_apex_button
+    hex: "F59E0B"
+
+  - id: color_apex_outline
+    hex: "FFD166"
+
+  - id: color_cancel
+    hex: "C62828"
+
+  - id: color_cancel_outline
+    hex: "EF5350"
+
+  - id: color_white_text
+    hex: "FFFFFF"
+
+  - id: color_black_text
+    hex: "111111"
+
+  - id: color_fusion_status
+    hex: "64B5F6"
+
+  - id: color_apex_status
+    hex: "FFD166"
+
+  - id: color_footer_sent
+    hex: "66D98A"
+
+  - id: color_alert_red
+    hex: "C62828"
+
+  - id: color_alert_amber
+    hex: "F9A825"
+
+  - id: color_alert_green
+    hex: "2E7D32"
+
+  - id: color_alert_blue
+    hex: "1976D2"
+
+globals:
+  - id: apex_feed_number_local
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: apex_remaining_local
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: touch_latched
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: touch_action
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: status_message
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: alert_index
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+sensor:
+  # Home Assistant must provide:
+  # - sensor.apex_feed_status state: 0 through 4
+  # - sensor.apex_feed_status attribute "active": remaining seconds
+  - platform: homeassistant
+    id: apex_feed_number
+    entity_id: sensor.apex_feed_status
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(apex_feed_number_local) = (int) roundf(x);
+
+            if (id(apex_feed_number_local) == 0) {
+              id(apex_remaining_local) = 0;
+            }
+
+  - platform: homeassistant
+    id: apex_feed_remaining
+    entity_id: sensor.apex_feed_status
+    attribute: active
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(apex_remaining_local) = (int) roundf(x);
+
+  # Home Assistant must provide a live remaining-seconds sensor
+  # for the optional Fusion-style feed sequence.
+  - platform: homeassistant
+    id: fusion_feed_remaining_seconds
+    entity_id: sensor.fusion_feed_15_remaining_seconds
+    internal: true
+
+text_sensor:
+  # Home Assistant timer state: active or idle
+  - platform: homeassistant
+    id: fusion_feed_15_state
+    entity_id: timer.fusion_feed_15
+    internal: true
+
+  # Expected alert format:
+  # A:ALARM TEXT|W:WARNING TEXT|I:INFO TEXT|B:BLUE INFO TEXT
+  # Or simply: NORMAL
+  - platform: homeassistant
+    id: apex_cyd_alerts
+    entity_id: sensor.apex_cyd_alerts
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(alert_index) = 0;
+
+interval:
+  # Smoothly decrement the Apex countdown locally between
+  # Home Assistant polling updates.
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(apex_remaining_local) > 0) {
+            id(apex_remaining_local)--;
+
+            if (id(apex_remaining_local) <= 0) {
+              id(apex_remaining_local) = 0;
+              id(apex_feed_number_local) = 0;
+            }
+          }
+
+  # Rotate multiple active footer items every four seconds.
+  - interval: 4s
+    then:
+      - lambda: |-
+          const std::string alerts = id(apex_cyd_alerts).state;
+
+          if (alerts.empty() || alerts == "NORMAL") {
+            id(alert_index) = 0;
+            return;
+          }
+
+          int count = 1;
+
+          for (char c : alerts) {
+            if (c == '|') {
+              count++;
+            }
+          }
+
+          if (count > 1) {
+            id(alert_index) = (id(alert_index) + 1) % count;
+          } else {
+            id(alert_index) = 0;
+          }
+
+script:
+  - id: run_fusion_feed_15
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "FUSION 15 SENT";
+      - homeassistant.action:
+          action: script.turn_on
+          data:
+            entity_id: script.fusion_15_start
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+  - id: run_fusion_cancel
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "FUSION CANCEL SENT";
+      - homeassistant.action:
+          action: script.turn_on
+          data:
+            entity_id: script.fusion_15_cancel
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+  - id: run_apex_feed_a
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "APEX A SENT";
+      - homeassistant.action:
+          action: rest_command.apex_feed_a
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+  - id: run_apex_feed_b
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "APEX B SENT";
+      - homeassistant.action:
+          action: rest_command.apex_feed_b
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+  - id: run_apex_feed_c
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "APEX C SENT";
+      - homeassistant.action:
+          action: rest_command.apex_feed_c
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+  - id: run_apex_feed_d
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "APEX D SENT";
+      - homeassistant.action:
+          action: rest_command.apex_feed_d
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+  - id: run_apex_cancel
+    mode: single
+    then:
+      - lambda: |-
+          id(status_message) = "APEX CANCEL SENT";
+      - homeassistant.action:
+          action: rest_command.apex_cancel
+      - delay: 1500ms
+      - lambda: |-
+          id(status_message) = "";
+
+display:
+  - platform: mipi_spi
+    id: cyd_display
+    model: ST7789V
+    spi_id: tft_spi
+    cs_pin:
+      number: GPIO15
+      ignore_strapping_warning: true
+    dc_pin:
+      number: GPIO2
+      ignore_strapping_warning: true
+    dimensions:
+      width: 240
+      height: 320
+    rotation: 90
+    invert_colors: false
+    update_interval: 250ms
+    lambda: |-
+      char fusion_line[32];
+      char apex_line[32];
+      char alert_line[96];
+
+      const bool fusion_active =
+          id(fusion_feed_15_state).state == "active";
+
+      if (fusion_active &&
+          !isnan(id(fusion_feed_remaining_seconds).state) &&
+          id(fusion_feed_remaining_seconds).state > 0) {
+        int remaining = (int) roundf(id(fusion_feed_remaining_seconds).state);
+
+        int mins = remaining / 60;
+        int secs = remaining % 60;
+
+        snprintf(
+          fusion_line,
+          sizeof(fusion_line),
+          "FUSION %d:%02d",
+          mins,
+          secs
+        );
+      } else {
+        snprintf(
+          fusion_line,
+          sizeof(fusion_line),
+          "FUSION READY"
+        );
+      }
+
+      if (id(apex_feed_number_local) > 0 &&
+          id(apex_remaining_local) > 0) {
+        int mins = id(apex_remaining_local) / 60;
+        int secs = id(apex_remaining_local) % 60;
+
+        char feed_char = '?';
+
+        if (id(apex_feed_number_local) >= 1 &&
+            id(apex_feed_number_local) <= 4) {
+          feed_char = 'A' + (id(apex_feed_number_local) - 1);
+        }
+
+        snprintf(
+          apex_line,
+          sizeof(apex_line),
+          "APEX %c %d:%02d",
+          feed_char,
+          mins,
+          secs
+        );
+      } else {
+        snprintf(
+          apex_line,
+          sizeof(apex_line),
+          "APEX READY"
+        );
+      }
+
+      const std::string alerts = id(apex_cyd_alerts).state;
+
+      int alert_count = 0;
+      int selected_index = 0;
+      std::string selected_entry = "";
+
+      if (!alerts.empty() && alerts != "NORMAL") {
+        alert_count = 1;
+
+        for (char c : alerts) {
+          if (c == '|') {
+            alert_count++;
+          }
+        }
+
+        selected_index = id(alert_index) % alert_count;
+
+        size_t start = 0;
+
+        for (int i = 0; i < selected_index; i++) {
+          size_t separator = alerts.find('|', start);
+
+          if (separator == std::string::npos) {
+            start = 0;
+            selected_index = 0;
+            break;
+          }
+
+          start = separator + 1;
+        }
+
+        size_t end = alerts.find('|', start);
+
+        if (end == std::string::npos) {
+          selected_entry = alerts.substr(start);
+        } else {
+          selected_entry = alerts.substr(start, end - start);
+        }
+      }
+
+      const bool alert_is_alarm = selected_entry.rfind("A:", 0) == 0;
+      const bool alert_is_info = selected_entry.rfind("I:", 0) == 0;
+      const bool alert_is_blue = selected_entry.rfind("B:", 0) == 0;
+      const bool alert_is_warning = selected_entry.rfind("W:", 0) == 0;
+      const bool show_alert =
+          alert_is_alarm ||
+          alert_is_info ||
+          alert_is_blue ||
+          alert_is_warning;
+      const bool blink_visible = ((millis() / 1000) % 2) == 0;
+
+      std::string alert_text = "";
+
+      if (show_alert && selected_entry.length() > 2) {
+        alert_text = selected_entry.substr(2);
+      }
+
+      if (show_alert) {
+        if (alert_count > 1) {
+          snprintf(
+            alert_line,
+            sizeof(alert_line),
+            "%s  %d/%d",
+            alert_text.c_str(),
+            selected_index + 1,
+            alert_count
+          );
+        } else {
+          snprintf(
+            alert_line,
+            sizeof(alert_line),
+            "%s",
+            alert_text.c_str()
+          );
+        }
+      } else {
+        snprintf(
+          alert_line,
+          sizeof(alert_line),
+          ""
+        );
+      }
+
+      it.fill(id(color_bg));
+
+      it.filled_rectangle(0, 0, 320, 30, id(color_header));
+      it.rectangle(0, 0, 320, 30, id(color_header_outline));
+
+      auto now = id(ha_time).now();
+
+      if (now.is_valid()) {
+        it.strftime(
+          8,
+          15,
+          id(font_header_side),
+          id(color_black_text),
+          TextAlign::CENTER_LEFT,
+          "%a %b %d",
+          now
+        );
+
+        it.strftime(
+          312,
+          15,
+          id(font_header_side),
+          id(color_black_text),
+          TextAlign::CENTER_RIGHT,
+          "%I:%M %p",
+          now
+        );
+      }
+
+      it.printf(
+        160,
+        15,
+        id(font_title),
+        id(color_white_text),
+        TextAlign::CENTER,
+        "FEED CONTROL"
+      );
+
+      it.printf(
+        160,
+        35,
+        id(font_status),
+        id(color_apex_status),
+        TextAlign::TOP_CENTER,
+        "%s",
+        apex_line
+      );
+
+      it.printf(
+        160,
+        48,
+        id(font_status),
+        id(color_fusion_status),
+        TextAlign::TOP_CENTER,
+        "%s",
+        fusion_line
+      );
+
+      it.filled_rectangle(8, 64, 146, 40, id(color_apex_button));
+      it.rectangle(8, 64, 146, 40, id(color_apex_outline));
+      it.printf(
+        81,
+        76,
+        id(font_button),
+        id(color_black_text),
+        TextAlign::TOP_CENTER,
+        "APEX A"
+      );
+
+      it.filled_rectangle(166, 64, 146, 40, id(color_apex_button));
+      it.rectangle(166, 64, 146, 40, id(color_apex_outline));
+      it.printf(
+        239,
+        76,
+        id(font_button),
+        id(color_black_text),
+        TextAlign::TOP_CENTER,
+        "APEX B"
+      );
+
+      it.filled_rectangle(8, 112, 146, 40, id(color_apex_button));
+      it.rectangle(8, 112, 146, 40, id(color_apex_outline));
+      it.printf(
+        81,
+        124,
+        id(font_button),
+        id(color_black_text),
+        TextAlign::TOP_CENTER,
+        "APEX C"
+      );
+
+      it.filled_rectangle(166, 112, 146, 40, id(color_apex_button));
+      it.rectangle(166, 112, 146, 40, id(color_apex_outline));
+      it.printf(
+        239,
+        124,
+        id(font_button),
+        id(color_black_text),
+        TextAlign::TOP_CENTER,
+        "APEX D"
+      );
+
+      if (fusion_active) {
+        it.filled_rectangle(8, 160, 146, 40, id(color_cancel));
+        it.rectangle(8, 160, 146, 40, id(color_cancel_outline));
+        it.printf(
+          81,
+          172,
+          id(font_button),
+          id(color_black_text),
+          TextAlign::TOP_CENTER,
+          "FUSION CANCEL"
+        );
+      } else {
+        it.filled_rectangle(8, 160, 146, 40, id(color_fusion_button));
+        it.rectangle(8, 160, 146, 40, id(color_fusion_outline));
+        it.printf(
+          81,
+          172,
+          id(font_button),
+          id(color_black_text),
+          TextAlign::TOP_CENTER,
+          "FUSION 15"
+        );
+      }
+
+      it.filled_rectangle(166, 160, 146, 40, id(color_cancel));
+      it.rectangle(166, 160, 146, 40, id(color_cancel_outline));
+      it.printf(
+        239,
+        172,
+        id(font_button),
+        id(color_black_text),
+        TextAlign::TOP_CENTER,
+        "APEX CANCEL"
+      );
+
+      if (!show_alert) {
+        if (id(status_message).empty()) {
+          it.printf(
+            160,
+            214,
+            id(font_message),
+            id(color_white_text),
+            TextAlign::TOP_CENTER,
+            "SELECT FEED ACTION"
+          );
+        } else {
+          it.printf(
+            160,
+            214,
+            id(font_message),
+            id(color_footer_sent),
+            TextAlign::TOP_CENTER,
+            "%s",
+            id(status_message).c_str()
+          );
+        }
+      }
+
+      const bool footer_visible =
+          alert_is_info ||
+          alert_is_blue ||
+          blink_visible;
+
+      if (show_alert && footer_visible) {
+        if (alert_is_alarm) {
+          it.filled_rectangle(0, 206, 320, 34, id(color_alert_red));
+          it.rectangle(0, 206, 320, 34, id(color_cancel_outline));
+        } else if (alert_is_warning) {
+          it.filled_rectangle(0, 206, 320, 34, id(color_alert_amber));
+          it.rectangle(0, 206, 320, 34, id(color_apex_outline));
+        } else if (alert_is_blue) {
+          it.filled_rectangle(0, 206, 320, 34, id(color_alert_blue));
+          it.rectangle(0, 206, 320, 34, id(color_fusion_outline));
+        } else {
+          it.filled_rectangle(0, 206, 320, 34, id(color_alert_green));
+          it.rectangle(0, 206, 320, 34, id(color_footer_sent));
+        }
+
+        it.printf(
+          160,
+          223,
+          id(font_button),
+          id(color_white_text),
+          TextAlign::CENTER,
+          "%s",
+          alert_line
+        );
+      }
+
+touchscreen:
+  - platform: xpt2046
+    id: cyd_touch
+    spi_id: touch_spi
+    cs_pin: GPIO33
+    interrupt_pin: GPIO36
+    update_interval: 50ms
+    threshold: 400
+    calibration:
+      # These values worked on the original build.
+      # Your CYD may require calibration adjustments.
+      x_min: 280
+      x_max: 3860
+      y_min: 340
+      y_max: 3860
+
+    on_touch:
+      - if:
+          condition:
+            lambda: "return !id(touch_latched);"
+          then:
+            - lambda: |-
+                id(touch_latched) = true;
+                id(touch_action) = 0;
+
+                int px = (touch.y_raw - 530) * 320 / (3294 - 530);
+                int py = (touch.x_raw - 736) * 240 / (3348 - 736);
+
+                if (px < 0) px = 0;
+                if (px > 319) px = 319;
+                if (py < 0) py = 0;
+                if (py > 239) py = 239;
+
+                ESP_LOGI(
+                  "feed_control",
+                  "Touch raw=%d,%d mapped=%d,%d",
+                  touch.x_raw,
+                  touch.y_raw,
+                  px,
+                  py
+                );
+
+                if (py >= 60 && py <= 108) {
+                  if (px >= 0 && px <= 160) {
+                    id(touch_action) = 2;
+                  } else if (px >= 160 && px <= 319) {
+                    id(touch_action) = 3;
+                  }
+
+                } else if (py >= 108 && py <= 156) {
+                  if (px >= 0 && px <= 160) {
+                    id(touch_action) = 4;
+                  } else if (px >= 160 && px <= 319) {
+                    id(touch_action) = 5;
+                  }
+
+                } else if (py >= 156 && py <= 206) {
+                  if (px >= 0 && px <= 160) {
+                    id(touch_action) = 1;
+                  } else if (px >= 160 && px <= 319) {
+                    id(touch_action) = 6;
+                  }
+                }
+
+            - if:
+                condition:
+                  lambda: |-
+                    return id(touch_action) == 1 &&
+                           id(fusion_feed_15_state).state == "active";
+                then:
+                  - script.execute: run_fusion_cancel
+
+            - if:
+                condition:
+                  lambda: |-
+                    return id(touch_action) == 1 &&
+                           id(fusion_feed_15_state).state != "active";
+                then:
+                  - script.execute: run_fusion_feed_15
+
+            - if:
+                condition:
+                  lambda: "return id(touch_action) == 2;"
+                then:
+                  - script.execute: run_apex_feed_a
+
+            - if:
+                condition:
+                  lambda: "return id(touch_action) == 3;"
+                then:
+                  - script.execute: run_apex_feed_b
+
+            - if:
+                condition:
+                  lambda: "return id(touch_action) == 4;"
+                then:
+                  - script.execute: run_apex_feed_c
+
+            - if:
+                condition:
+                  lambda: "return id(touch_action) == 5;"
+                then:
+                  - script.execute: run_apex_feed_d
+
+            - if:
+                condition:
+                  lambda: "return id(touch_action) == 6;"
+                then:
+                  - script.execute: run_apex_cancel
+
+    on_release:
+      - lambda: |-
+          id(touch_latched) = false;
