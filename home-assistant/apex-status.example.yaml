@@ -21,16 +21,18 @@
 
 rest:
   - resource: !secret apex_feed_status_url
-    method: GET
+    authentication: basic
     username: !secret apex_username
     password: !secret apex_password
-    authentication: basic
     scan_interval: 5
+    timeout: 5
+
     sensor:
-      - name: Apex Feed Status
+      - name: "Apex Feed Status"
         unique_id: apex_feed_status
         icon: mdi:fish
-        value_template: "{{ value_json.name | int(0) }}"
+        value_template: "{{ value_json.feed.name }}"
+        json_attributes_path: "$.feed"
         json_attributes:
           - name
           - active
