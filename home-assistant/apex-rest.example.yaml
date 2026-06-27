@@ -1,0 +1,59 @@
+# Example Home Assistant REST commands for Neptune Apex Feed A/B/C/D.
+#
+# Copy this into your Home Assistant YAML configuration or include it
+# from a package file.
+#
+# Keep your Apex URLs and credentials in secrets.yaml.
+#
+# Required secrets.yaml entries:
+#
+# apex_feed_a_url: "http://192.168.1.100/rest/status/feed/1"
+# apex_feed_b_url: "http://192.168.1.100/rest/status/feed/2"
+# apex_feed_c_url: "http://192.168.1.100/rest/status/feed/3"
+# apex_feed_d_url: "http://192.168.1.100/rest/status/feed/4"
+# apex_username: "your_apex_username"
+# apex_password: "your_apex_password"
+#
+# Apex Cancel below uses the Feed A endpoint. Confirm that behavior
+# works for your own Apex before relying on it.
+
+rest_command:
+  apex_feed_a:
+    url: !secret apex_feed_a_url
+    method: PUT
+    username: !secret apex_username
+    password: !secret apex_password
+    content_type: "application/json"
+    payload: '{"name":1,"active":1,"errorCode":0,"errorMessage":""}'
+
+  apex_feed_b:
+    url: !secret apex_feed_b_url
+    method: PUT
+    username: !secret apex_username
+    password: !secret apex_password
+    content_type: "application/json"
+    payload: '{"name":2,"active":1,"errorCode":0,"errorMessage":""}'
+
+  apex_feed_c:
+    url: !secret apex_feed_c_url
+    method: PUT
+    username: !secret apex_username
+    password: !secret apex_password
+    content_type: "application/json"
+    payload: '{"name":3,"active":1,"errorCode":0,"errorMessage":""}'
+
+  apex_feed_d:
+    url: !secret apex_feed_d_url
+    method: PUT
+    username: !secret apex_username
+    password: !secret apex_password
+    content_type: "application/json"
+    payload: '{"name":4,"active":1,"errorCode":0,"errorMessage":""}'
+
+  apex_feed_cancel:
+    url: !secret apex_feed_a_url
+    method: PUT
+    username: !secret apex_username
+    password: !secret apex_password
+    content_type: "application/json"
+    payload: '{"name":1,"active":0,"errorCode":0,"errorMessage":""}'
