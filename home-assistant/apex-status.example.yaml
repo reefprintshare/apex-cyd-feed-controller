@@ -1,0 +1,36 @@
+# Example Home Assistant REST sensor for live Neptune Apex feed status.
+#
+# This polls the Apex local feed-status endpoint every 5 seconds.
+# ESPHome can import:
+#
+# - sensor.apex_feed_status state:
+#     0 = no feed active
+#     1 = Feed A
+#     2 = Feed B
+#     3 = Feed C
+#     4 = Feed D
+#
+# - the "active" attribute:
+#     remaining feed time in seconds reported by the Apex
+#
+# Required secrets.yaml entries:
+#
+# apex_feed_status_url: "http://192.168.1.100/rest/status/feed"
+# apex_username: "YOUR_APEX_USERNAME"
+# apex_password: "YOUR_APEX_PASSWORD"
+
+rest:
+  - resource: !secret apex_feed_status_url
+    method: GET
+    username: !secret apex_username
+    password: !secret apex_password
+    authentication: basic
+    scan_interval: 5
+    sensor:
+      - name: Apex Feed Status
+        unique_id: apex_feed_status
+        icon: mdi:fish
+        value_template: "{{ value_json.name | int(0) }}"
+        json_attributes:
+          - name
+          - active
