@@ -74,6 +74,7 @@ Rotating alert/status footer or normal “SELECT FEED ACTION”
 │   └── secrets.example.yaml
 ├── images/
 ├── .gitignore
+├── CHANGELOG.md
 ├── LICENSE
 └── README.md
 ```
