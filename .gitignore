@@ -1,0 +1,39 @@
+# ESPHome secrets and generated build data
+secrets.yaml
+**/secrets.yaml
+.esphome/
+.esphome/
+firmware/
+*.bin
+*.elf
+*.map
+*.log
+
+# Home Assistant private/local data
+home-assistant/secrets.yaml
+home-assistant/.storage/
+home-assistant/home-assistant_v2.db*
+home-assistant/*.log
+home-assistant/custom_components/
+
+# Backups and exports
+*.tar
+*.zip
+*.gz
+*.bak
+*.backup
+
+# Images/screenshots that may contain personal information
+private/
+screenshots/private/
+
+# Local editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*~
