@@ -5,6 +5,7 @@ A local, at-the-tank touchscreen controller and status display for Neptune Apex,
 This project turns a 2.8-inch ESP32 touchscreen into a dedicated reef-tank control panel for Apex feed modes, Home Assistant automations, live countdowns, and rotating Apex alarm/warning/status messages.
 
 > **Local LAN only:** Normal operation does not depend on Apex Fusion or any cloud service.
+> 
 > ![DIY Apex CYD Feed Controller main screen](images/main-screen.png)
 
 ## Features
@@ -122,6 +123,24 @@ It includes:
 - Touch calibration values from the original build
 
 See [ESPHome configuration](esphome/README.md) before flashing.
+
+## Screen States and Status Footer Examples
+
+The controller provides at-a-glance confirmation for feed actions, live countdowns, and Apex-derived status conditions.
+
+![DIY Apex CYD Feed Controller feature walkthrough](images/feature-walkthrough-collage.png)
+
+The screen examples above show:
+
+- Normal idle state with all feed controls available
+- Live Apex feed countdown from the Apex local feed-status endpoint
+- Active Fusion feed countdown with the button changing to `FUSION CANCEL`
+- Touch-command confirmation feedback
+- Green informational status footer
+- Blue informational status footer
+- Amber warning footer
+- Red alarm footer
+- Multiple-alert rotation with a `1/2` and `2/2` indicator
 
 ## Fusion Feed Behavior
 
