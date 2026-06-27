@@ -1,0 +1,112 @@
+# Home Assistant template examples for:
+# - Fusion feed remaining seconds
+# - Consolidated Apex alert/status text for the CYD footer
+#
+# This file expects another Home Assistant REST sensor to provide:
+#
+# sensor.apex_outlet_states
+#
+# with an "outlet" attribute containing the parsed Apex status.xml outlet list.
+#
+# The public example for that REST sensor will be added separately.
+#
+# Change or remove the optional TridentBusy and SOW8 mappings below
+# to match your own Apex virtual outputs.
+
+template:
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/1"
+      - trigger: state
+        entity_id: timer.fusion_feed_15
+    sensor:
+      - name: "Fusion Feed 15 Remaining Seconds"
+        unique_id: fusion_feed_15_remaining_seconds
+        unit_of_measurement: s
+        state: >
+          {% set finish = state_attr('timer.fusion_feed_15', 'finishes_at') %}
+          {% if is_state('timer.fusion_feed_15', 'active') and finish %}
+            {{ [0, (as_timestamp(finish) - as_timestamp(now())) | round(0)] | max }}
+          {% else %}
+            0
+          {% endif %}
+
+  - sensor:
+      - name: "Apex CYD Alerts"
+        unique_id: apex_cyd_alerts
+        state: >-
+          {% set outlets = state_attr('sensor.apex_outlet_states', 'outlet') | default([], true) %}
+
+          {# Friendly display names for known Apex virtual outputs. #}
+          {% set labels = {
+            'ALRM_Leak': 'LEAK DETECTED',
+            'ALRM_RtrnOff': 'RETURN PUMP OFF',
+            'ALRM_TempHi': 'HIGH TEMPERATURE ALARM',
+            'ALRM_TempLo': 'LOW TEMPERATURE ALARM',
+            'WARN_TempHi': 'HIGH TEMPERATURE WARNING',
+            'WARN_TempLo': 'LOW TEMPERATURE WARNING',
+            'ALRM_pHHi': 'HIGH PH ALARM',
+            'ALRM_pHLo': 'LOW PH ALARM',
+            'WARN_pHHi': 'HIGH PH WARNING',
+            'WARN_pHLo': 'LOW PH WARNING',
+            'ALRM_AlkHi': 'HIGH ALKALINITY ALARM',
+            'ALRM_AlkLo': 'LOW ALKALINITY ALARM',
+            'WARN_AlkHi': 'HIGH ALKALINITY WARNING',
+            'WARN_AlkLo': 'LOW ALKALINITY WARNING',
+            'WARN_Po4Hi': 'HIGH PHOSPHATE WARNING',
+            'WARN_Po4Lo': 'LOW PHOSPHATE WARNING'
+          } %}
+
+          {% set ns = namespace(
+            alarms=[],
+            infos=[],
+            blue_infos=[],
+            warnings=[]
+          ) %}
+
+          {% for outlet in outlets %}
+            {% set name = outlet.get('name', '') %}
+            {% set state = outlet.get('state', '') %}
+
+            {% if state in ['AON', 'ON'] %}
+
+              {# Optional schedule/virtual-output status example. #}
+              {% if name == 'TridentBusy' %}
+                {% set ns.infos = ns.infos + ['I:TRIDENT TESTING'] %}
+
+              {# Optional pump/virtual-output status example. #}
+              {% elif name == 'SOW8' %}
+                {% set ns.blue_infos = ns.blue_infos + ['B:SOW WAVEMAKER RUNNING'] %}
+
+              {# Automatically include Apex virtual outputs using ALRM_ or WARN_. #}
+              {% elif name.startswith('ALRM_') or name.startswith('WARN_') %}
+                {% set fallback = name
+                   | regex_replace('^(ALRM_|WARN_)', '')
+                   | regex_replace('([a-z])([A-Z])', '\\1 \\2')
+                   | replace('_', ' ')
+                   | title %}
+
+                {% set label = labels.get(name, fallback) %}
+
+                {% if name.startswith('ALRM_') %}
+                  {% set ns.alarms = ns.alarms + ['A:' ~ label] %}
+                {% else %}
+                  {% set ns.warnings = ns.warnings + ['W:' ~ label] %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+
+          {{ (
+            ns.alarms +
+            ns.infos +
+            ns.blue_infos +
+            ns.warnings
+          ) | join('|')
+          if (
+            ns.alarms +
+            ns.infos +
+            ns.blue_infos +
+            ns.warnings
+          )
+          else 'NORMAL' }}
