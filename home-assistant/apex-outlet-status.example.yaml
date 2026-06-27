@@ -1,0 +1,35 @@
+# Example Home Assistant REST sensor for Neptune Apex outlet/status data.
+#
+# This polls the local Apex status.xml endpoint every 5 seconds and creates:
+#
+# sensor.apex_outlet_states
+#
+# Its "outlet" attribute contains the Apex outlet list used by:
+#
+# home-assistant/apex-alerts-and-countdowns.example.yaml
+#
+# Required secrets.yaml entries:
+#
+# apex_status_xml_url: "http://192.168.1.100/cgi-bin/status.xml"
+# apex_username: "YOUR_APEX_USERNAME"
+# apex_password: "YOUR_APEX_PASSWORD"
+
+rest:
+  - resource: !secret apex_status_xml_url
+    authentication: basic
+    username: !secret apex_username
+    password: !secret apex_password
+    scan_interval: 5
+    timeout: 5
+
+    sensor:
+      - name: "Apex Outlet States"
+        unique_id: apex_outlet_states
+        value_template: >-
+          {{ value_json.status.outlets.outlet
+             | selectattr('state', 'in', ['AON', 'ON'])
+             | list
+             | count }}
+        json_attributes_path: "$.status.outlets"
+        json_attributes:
+          - outlet
