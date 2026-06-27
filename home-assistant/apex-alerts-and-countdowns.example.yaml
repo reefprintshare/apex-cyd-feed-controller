@@ -1,14 +1,12 @@
-# Home Assistant template examples for:
-# - Fusion feed remaining seconds
-# - Consolidated Apex alert/status text for the CYD footer
+# This file expects the Home Assistant REST sensor created by:
 #
-# This file expects another Home Assistant REST sensor to provide:
+# home-assistant/apex-outlet-status.example.yaml
+#
+# That example provides:
 #
 # sensor.apex_outlet_states
 #
 # with an "outlet" attribute containing the parsed Apex status.xml outlet list.
-#
-# The public example for that REST sensor will be added separately.
 #
 # Change or remove the optional TridentBusy and SOW8 mappings below
 # to match your own Apex virtual outputs.
