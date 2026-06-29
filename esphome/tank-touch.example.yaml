@@ -1,17 +1,17 @@
-# DIY Apex CYD Feed Controller & Status Display
+# DIY Apex CYD Feed Controller & Status Display — v0.2.0 example
 #
-# Hardware:
-# - ESP32-2432S028 CYD
-# - 320 x 240 display in landscape orientation
+# Hardware: ESP32-2432S028 CYD, 320 x 240 landscape display
 #
 # Before flashing:
-# 1. Copy secrets.example.yaml to secrets.yaml.
-# 2. Add your Wi-Fi, encrypted API key, and OTA password.
-# 3. Update Home Assistant entity IDs below if yours differ.
-# 4. Review touchscreen calibration values for your own CYD board.
+# 1. Copy secrets.example.yaml to a private secrets.yaml file.
+# 2. Add Wi-Fi credentials, api_encryption_key, and ota_password.
+# 3. Update Home Assistant entity IDs below to match your setup.
+# 4. Verify touch calibration values for your individual CYD.
 #
-# This file intentionally contains no Apex IP address, Apex credentials,
-# Home Assistant URL, static IP address, or personal device details.
+# This public example intentionally excludes all private IP addresses,
+# hostnames, Wi-Fi details, credentials, and static-address settings.
+#
+# Required Home Assistant entities are documented in the repository.
 
 esphome:
   name: apex-cyd-feed-panel
@@ -85,13 +85,19 @@ font:
 
 color:
   - id: color_bg
-    hex: "10212B"
+    hex: "080A0D"
 
   - id: color_header
     hex: "F57C00"
 
-  - id: color_header_outline
+  - id: color_header_top_highlight
     hex: "FFB74D"
+
+  - id: color_header_bottom_edge
+    hex: "B84D00"
+
+  - id: color_header_title_shadow
+    hex: "6B2C00"
 
   - id: color_fusion_button
     hex: "1976D2"
@@ -99,17 +105,62 @@ color:
   - id: color_fusion_outline
     hex: "64B5F6"
 
+  - id: color_fusion_border
+    hex: "0A4F8A"
+
+  - id: color_fusion_pressed_fill
+    hex: "0A4F8A"
+
+  - id: color_fusion_pressed_outline
+    hex: "64B5F6"
+
+  - id: color_fusion_pressed_text
+    hex: "E3F2FD"
+
   - id: color_apex_button
     hex: "F59E0B"
 
   - id: color_apex_outline
     hex: "FFD166"
 
+  - id: color_apex_border
+    hex: "B85F00"
+
+  - id: color_apex_active_button
+    hex: "C96A00"
+
+  - id: color_apex_active_outline
+    hex: "F59E0B"
+
+  - id: color_apex_active_text
+    hex: "FFF3CD"
+
+  - id: color_apex_pressed_fill
+    hex: "C96A00"
+
+  - id: color_apex_pressed_outline
+    hex: "FFD166"
+
+  - id: color_apex_pressed_text
+    hex: "FFF3CD"
+
   - id: color_cancel
     hex: "C62828"
 
   - id: color_cancel_outline
     hex: "EF5350"
+
+  - id: color_cancel_border
+    hex: "8E1E1E"
+
+  - id: color_cancel_pressed_fill
+    hex: "8E1E1E"
+
+  - id: color_cancel_pressed_outline
+    hex: "EF5350"
+
+  - id: color_cancel_pressed_text
+    hex: "FFEBEE"
 
   - id: color_white_text
     hex: "FFFFFF"
@@ -125,6 +176,15 @@ color:
 
   - id: color_footer_sent
     hex: "66D98A"
+
+  - id: color_idle_footer_fill
+    hex: "10161D"
+
+  - id: color_idle_footer_border
+    hex: "29414F"
+
+  - id: color_idle_footer_text
+    hex: "D7E1E8"
 
   - id: color_alert_red
     hex: "C62828"
@@ -142,22 +202,52 @@ globals:
   - id: apex_feed_number_local
     type: int
     restore_value: no
-    initial_value: "0"
+    initial_value: '0'
 
   - id: apex_remaining_local
     type: int
     restore_value: no
-    initial_value: "0"
+    initial_value: '0'
+
+  - id: fusion_ha_last_update_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: screen_wake_until_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: screen_is_dim
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: priority_alert_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: button_flash_action
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: button_flash_until_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
   - id: touch_latched
     type: bool
     restore_value: no
-    initial_value: "false"
+    initial_value: 'false'
 
   - id: touch_action
     type: int
     restore_value: no
-    initial_value: "0"
+    initial_value: '0'
 
   - id: status_message
     type: std::string
@@ -167,12 +257,14 @@ globals:
   - id: alert_index
     type: int
     restore_value: no
-    initial_value: "0"
+    initial_value: '0'
 
 sensor:
-  # Home Assistant must provide:
-  # - sensor.apex_feed_status state: 0 through 4
-  # - sensor.apex_feed_status attribute "active": remaining seconds
+  - platform: wifi_signal
+    id: wifi_signal_dbm
+    internal: true
+    update_interval: 10s
+
   - platform: homeassistant
     id: apex_feed_number
     entity_id: sensor.apex_feed_status
@@ -196,23 +288,41 @@ sensor:
         - lambda: |-
             id(apex_remaining_local) = (int) roundf(x);
 
-  # Home Assistant must provide a live remaining-seconds sensor
-  # for the optional Fusion-style feed sequence.
+  - platform: homeassistant
+    id: apex_feed_status_age
+    entity_id: sensor.apex_feed_status_age
+    internal: true
+
+  - platform: homeassistant
+    id: tank_touch_heartbeat
+    entity_id: sensor.apex_cyd_heartbeat
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(fusion_ha_last_update_ms) = millis();
+
   - platform: homeassistant
     id: fusion_feed_remaining_seconds
     entity_id: sensor.fusion_feed_15_remaining_seconds
     internal: true
 
+  - platform: homeassistant
+    id: fusion_restore_remaining_seconds
+    entity_id: sensor.fusion_15_restore_remaining_seconds
+    internal: true
+
 text_sensor:
-  # Home Assistant timer state: active or idle
   - platform: homeassistant
     id: fusion_feed_15_state
     entity_id: timer.fusion_feed_15
     internal: true
 
-  # Expected alert format:
-  # A:ALARM TEXT|W:WARNING TEXT|I:INFO TEXT|B:BLUE INFO TEXT
-  # Or simply: NORMAL
+  - platform: homeassistant
+    id: fusion_restore_state
+    entity_id: script.fusion_15_restore_equipment
+    internal: true
+
   - platform: homeassistant
     id: apex_cyd_alerts
     entity_id: sensor.apex_cyd_alerts
@@ -222,9 +332,11 @@ text_sensor:
         - lambda: |-
             id(alert_index) = 0;
 
+            id(priority_alert_active) =
+                x.find("A:") != std::string::npos ||
+                x.find("W:") != std::string::npos;
+
 interval:
-  # Smoothly decrement the Apex countdown locally between
-  # Home Assistant polling updates.
   - interval: 1s
     then:
       - lambda: |-
@@ -237,7 +349,33 @@ interval:
             }
           }
 
-  # Rotate multiple active footer items every four seconds.
+          auto now = id(ha_time).now();
+          bool night_mode = false;
+
+          if (now.is_valid()) {
+            int minutes_now = now.hour * 60 + now.minute;
+
+            night_mode =
+                minutes_now >= (23 * 60) ||
+                minutes_now < (10 * 60);
+          }
+
+          const bool wake_active =
+              (int32_t) (id(screen_wake_until_ms) - millis()) > 0;
+
+          const bool should_dim =
+              night_mode &&
+              !wake_active &&
+              !id(priority_alert_active);
+
+          if (should_dim != id(screen_is_dim)) {
+            id(screen_is_dim) = should_dim;
+
+            auto call = id(screen_backlight).turn_on();
+            call.set_brightness(should_dim ? 0.20f : 1.0f);
+            call.perform();
+          }
+
   - interval: 4s
     then:
       - lambda: |-
@@ -249,11 +387,35 @@ interval:
           }
 
           int count = 1;
+          bool has_priority_item = false;
+          size_t start = 0;
 
-          for (char c : alerts) {
-            if (c == '|') {
-              count++;
+          while (true) {
+            size_t end = alerts.find('|', start);
+            std::string entry;
+
+            if (end == std::string::npos) {
+              entry = alerts.substr(start);
+            } else {
+              entry = alerts.substr(start, end - start);
             }
+
+            if (entry.rfind("A:", 0) == 0 ||
+                entry.rfind("W:", 0) == 0) {
+              has_priority_item = true;
+            }
+
+            if (end == std::string::npos) {
+              break;
+            }
+
+            count++;
+            start = end + 1;
+          }
+
+          if (has_priority_item) {
+            id(alert_index) = 0;
+            return;
           }
 
           if (count > 1) {
@@ -369,10 +531,88 @@ display:
       const bool fusion_active =
           id(fusion_feed_15_state).state == "active";
 
-      if (fusion_active &&
-          !isnan(id(fusion_feed_remaining_seconds).state) &&
-          id(fusion_feed_remaining_seconds).state > 0) {
-        int remaining = (int) roundf(id(fusion_feed_remaining_seconds).state);
+      const bool fusion_restoring =
+          id(fusion_restore_state).state == "on";
+
+      const bool apex_feed_active =
+          id(apex_feed_number_local) > 0 &&
+          id(apex_remaining_local) > 0;
+
+      const float apex_data_age =
+          id(apex_feed_status_age).state;
+
+      const bool apex_data_is_valid =
+          !isnan(apex_data_age);
+
+      const bool apex_data_fresh =
+          apex_data_is_valid &&
+          apex_data_age <= 15;
+
+      const bool apex_data_delayed =
+          apex_data_is_valid &&
+          apex_data_age > 15 &&
+          apex_data_age <= 30;
+
+      const uint32_t fusion_ha_age_ms =
+          id(fusion_ha_last_update_ms) == 0
+            ? 999999
+            : (uint32_t) (millis() - id(fusion_ha_last_update_ms));
+
+      const bool fusion_ha_fresh =
+          fusion_ha_age_ms <= 15000;
+
+      const bool fusion_ha_delayed =
+          fusion_ha_age_ms > 15000 &&
+          fusion_ha_age_ms <= 30000;
+
+      const float wifi_dbm =
+          id(wifi_signal_dbm).state;
+
+      const bool wifi_valid =
+          !isnan(wifi_dbm);
+
+      int wifi_bars = 0;
+
+      if (wifi_valid) {
+        if (wifi_dbm >= -55) {
+          wifi_bars = 4;
+        } else if (wifi_dbm >= -65) {
+          wifi_bars = 3;
+        } else if (wifi_dbm >= -75) {
+          wifi_bars = 2;
+        } else {
+          wifi_bars = 1;
+        }
+      }
+
+      if (fusion_restoring) {
+        if (!isnan(id(fusion_restore_remaining_seconds).state) &&
+            id(fusion_restore_remaining_seconds).state > 0) {
+          int remaining =
+              (int) roundf(id(fusion_restore_remaining_seconds).state);
+
+          int mins = remaining / 60;
+          int secs = remaining % 60;
+
+          snprintf(
+            fusion_line,
+            sizeof(fusion_line),
+            "SKIMMER IN %d:%02d",
+            mins,
+            secs
+          );
+        } else {
+          snprintf(
+            fusion_line,
+            sizeof(fusion_line),
+            "FUSION RESTORING"
+          );
+        }
+      } else if (fusion_active &&
+                 !isnan(id(fusion_feed_remaining_seconds).state) &&
+                 id(fusion_feed_remaining_seconds).state > 0) {
+        int remaining =
+            (int) roundf(id(fusion_feed_remaining_seconds).state);
 
         int mins = remaining / 60;
         int secs = remaining % 60;
@@ -392,8 +632,7 @@ display:
         );
       }
 
-      if (id(apex_feed_number_local) > 0 &&
-          id(apex_remaining_local) > 0) {
+      if (apex_feed_active) {
         int mins = id(apex_remaining_local) / 60;
         int secs = id(apex_remaining_local) % 60;
 
@@ -424,18 +663,54 @@ display:
 
       int alert_count = 0;
       int selected_index = 0;
+      int first_alarm_index = -1;
+      int first_warning_index = -1;
+      bool priority_locked = false;
       std::string selected_entry = "";
 
       if (!alerts.empty() && alerts != "NORMAL") {
         alert_count = 1;
+        int current_index = 0;
+        size_t scan_start = 0;
 
-        for (char c : alerts) {
-          if (c == '|') {
-            alert_count++;
+        while (true) {
+          size_t scan_end = alerts.find('|', scan_start);
+          std::string entry;
+
+          if (scan_end == std::string::npos) {
+            entry = alerts.substr(scan_start);
+          } else {
+            entry = alerts.substr(scan_start, scan_end - scan_start);
           }
+
+          if (entry.rfind("A:", 0) == 0 &&
+              first_alarm_index == -1) {
+            first_alarm_index = current_index;
+          }
+
+          if (entry.rfind("W:", 0) == 0 &&
+              first_warning_index == -1) {
+            first_warning_index = current_index;
+          }
+
+          if (scan_end == std::string::npos) {
+            break;
+          }
+
+          alert_count++;
+          current_index++;
+          scan_start = scan_end + 1;
         }
 
-        selected_index = id(alert_index) % alert_count;
+        if (first_alarm_index >= 0) {
+          selected_index = first_alarm_index;
+          priority_locked = true;
+        } else if (first_warning_index >= 0) {
+          selected_index = first_warning_index;
+          priority_locked = true;
+        } else {
+          selected_index = id(alert_index) % alert_count;
+        }
 
         size_t start = 0;
 
@@ -460,16 +735,26 @@ display:
         }
       }
 
-      const bool alert_is_alarm = selected_entry.rfind("A:", 0) == 0;
-      const bool alert_is_info = selected_entry.rfind("I:", 0) == 0;
-      const bool alert_is_blue = selected_entry.rfind("B:", 0) == 0;
-      const bool alert_is_warning = selected_entry.rfind("W:", 0) == 0;
+      const bool alert_is_alarm =
+          selected_entry.rfind("A:", 0) == 0;
+
+      const bool alert_is_info =
+          selected_entry.rfind("I:", 0) == 0;
+
+      const bool alert_is_blue =
+          selected_entry.rfind("B:", 0) == 0;
+
+      const bool alert_is_warning =
+          selected_entry.rfind("W:", 0) == 0;
+
       const bool show_alert =
           alert_is_alarm ||
           alert_is_info ||
           alert_is_blue ||
           alert_is_warning;
-      const bool blink_visible = ((millis() / 1000) % 2) == 0;
+
+      const bool blink_visible =
+          ((millis() / 1000) % 2) == 0;
 
       std::string alert_text = "";
 
@@ -478,7 +763,7 @@ display:
       }
 
       if (show_alert) {
-        if (alert_count > 1) {
+        if (!priority_locked && alert_count > 1) {
           snprintf(
             alert_line,
             sizeof(alert_line),
@@ -506,7 +791,10 @@ display:
       it.fill(id(color_bg));
 
       it.filled_rectangle(0, 0, 320, 30, id(color_header));
-      it.rectangle(0, 0, 320, 30, id(color_header_outline));
+      it.filled_rectangle(0, 0, 320, 2, id(color_header_top_highlight));
+      it.filled_rectangle(0, 28, 320, 2, id(color_header_bottom_edge));
+      it.filled_rectangle(0, 0, 2, 30, id(color_header_bottom_edge));
+      it.filled_rectangle(318, 0, 2, 30, id(color_header_bottom_edge));
 
       auto now = id(ha_time).now();
 
@@ -531,6 +819,15 @@ display:
           now
         );
       }
+
+      it.printf(
+        161,
+        16,
+        id(font_title),
+        id(color_header_title_shadow),
+        TextAlign::CENTER,
+        "FEED CONTROL"
+      );
 
       it.printf(
         160,
@@ -561,51 +858,164 @@ display:
         fusion_line
       );
 
-      it.filled_rectangle(8, 64, 146, 40, id(color_apex_button));
-      it.rectangle(8, 64, 146, 40, id(color_apex_outline));
-      it.printf(
-        81,
-        76,
-        id(font_button),
-        id(color_black_text),
-        TextAlign::TOP_CENTER,
-        "APEX A"
-      );
+      if (wifi_bars >= 3) {
+        if (wifi_bars >= 1) {
+          it.filled_rectangle(8, 49, 3, 3, id(color_footer_sent));
+        }
+        if (wifi_bars >= 2) {
+          it.filled_rectangle(13, 47, 3, 5, id(color_footer_sent));
+        }
+        if (wifi_bars >= 3) {
+          it.filled_rectangle(18, 45, 3, 7, id(color_footer_sent));
+        }
+        if (wifi_bars >= 4) {
+          it.filled_rectangle(23, 43, 3, 9, id(color_footer_sent));
+        }
+      } else if (wifi_bars == 2) {
+        it.filled_rectangle(8, 49, 3, 3, id(color_alert_amber));
+        it.filled_rectangle(13, 47, 3, 5, id(color_alert_amber));
+      } else {
+        it.filled_rectangle(8, 49, 3, 3, id(color_alert_red));
+      }
 
-      it.filled_rectangle(166, 64, 146, 40, id(color_apex_button));
-      it.rectangle(166, 64, 146, 40, id(color_apex_outline));
-      it.printf(
-        239,
-        76,
-        id(font_button),
-        id(color_black_text),
-        TextAlign::TOP_CENTER,
-        "APEX B"
-      );
+      if (apex_data_fresh) {
+        it.filled_rectangle(304, 39, 4, 4, id(color_footer_sent));
+      } else if (apex_data_delayed) {
+        it.filled_rectangle(304, 39, 4, 4, id(color_alert_amber));
+      } else {
+        it.filled_rectangle(304, 39, 4, 4, id(color_alert_red));
+      }
 
-      it.filled_rectangle(8, 112, 146, 40, id(color_apex_button));
-      it.rectangle(8, 112, 146, 40, id(color_apex_outline));
-      it.printf(
-        81,
-        124,
-        id(font_button),
-        id(color_black_text),
-        TextAlign::TOP_CENTER,
-        "APEX C"
-      );
+      if (fusion_ha_fresh) {
+        it.filled_rectangle(304, 52, 4, 4, id(color_footer_sent));
+      } else if (fusion_ha_delayed) {
+        it.filled_rectangle(304, 52, 4, 4, id(color_alert_amber));
+      } else {
+        it.filled_rectangle(304, 52, 4, 4, id(color_alert_red));
+      }
 
-      it.filled_rectangle(166, 112, 146, 40, id(color_apex_button));
-      it.rectangle(166, 112, 146, 40, id(color_apex_outline));
-      it.printf(
-        239,
-        124,
-        id(font_button),
-        id(color_black_text),
-        TextAlign::TOP_CENTER,
-        "APEX D"
-      );
+      const bool apex_a_active =
+          apex_feed_active &&
+          id(apex_feed_number_local) == 1;
+
+      const bool apex_b_active =
+          apex_feed_active &&
+          id(apex_feed_number_local) == 2;
+
+      const bool apex_c_active =
+          apex_feed_active &&
+          id(apex_feed_number_local) == 3;
+
+      const bool apex_d_active =
+          apex_feed_active &&
+          id(apex_feed_number_local) == 4;
+
+      if (apex_a_active) {
+        it.filled_rectangle(5, 61, 152, 46, id(color_apex_active_outline));
+        it.filled_rectangle(8, 64, 146, 40, id(color_apex_active_button));
+        it.rectangle(8, 64, 146, 40, id(color_apex_active_outline));
+        it.printf(
+          81,
+          76,
+          id(font_button),
+          id(color_apex_active_text),
+          TextAlign::TOP_CENTER,
+          "APEX A"
+        );
+      } else {
+        it.filled_rectangle(5, 61, 152, 46, id(color_apex_border));
+        it.filled_rectangle(8, 64, 146, 40, id(color_apex_button));
+        it.rectangle(8, 64, 146, 40, id(color_apex_outline));
+        it.printf(
+          81,
+          76,
+          id(font_button),
+          id(color_black_text),
+          TextAlign::TOP_CENTER,
+          "APEX A"
+        );
+      }
+
+      if (apex_b_active) {
+        it.filled_rectangle(163, 61, 152, 46, id(color_apex_active_outline));
+        it.filled_rectangle(166, 64, 146, 40, id(color_apex_active_button));
+        it.rectangle(166, 64, 146, 40, id(color_apex_active_outline));
+        it.printf(
+          239,
+          76,
+          id(font_button),
+          id(color_apex_active_text),
+          TextAlign::TOP_CENTER,
+          "APEX B"
+        );
+      } else {
+        it.filled_rectangle(163, 61, 152, 46, id(color_apex_border));
+        it.filled_rectangle(166, 64, 146, 40, id(color_apex_button));
+        it.rectangle(166, 64, 146, 40, id(color_apex_outline));
+        it.printf(
+          239,
+          76,
+          id(font_button),
+          id(color_black_text),
+          TextAlign::TOP_CENTER,
+          "APEX B"
+        );
+      }
+
+      if (apex_c_active) {
+        it.filled_rectangle(5, 109, 152, 46, id(color_apex_active_outline));
+        it.filled_rectangle(8, 112, 146, 40, id(color_apex_active_button));
+        it.rectangle(8, 112, 146, 40, id(color_apex_active_outline));
+        it.printf(
+          81,
+          124,
+          id(font_button),
+          id(color_apex_active_text),
+          TextAlign::TOP_CENTER,
+          "APEX C"
+        );
+      } else {
+        it.filled_rectangle(5, 109, 152, 46, id(color_apex_border));
+        it.filled_rectangle(8, 112, 146, 40, id(color_apex_button));
+        it.rectangle(8, 112, 146, 40, id(color_apex_outline));
+        it.printf(
+          81,
+          124,
+          id(font_button),
+          id(color_black_text),
+          TextAlign::TOP_CENTER,
+          "APEX C"
+        );
+      }
+
+      if (apex_d_active) {
+        it.filled_rectangle(163, 109, 152, 46, id(color_apex_active_outline));
+        it.filled_rectangle(166, 112, 146, 40, id(color_apex_active_button));
+        it.rectangle(166, 112, 146, 40, id(color_apex_active_outline));
+        it.printf(
+          239,
+          124,
+          id(font_button),
+          id(color_apex_active_text),
+          TextAlign::TOP_CENTER,
+          "APEX D"
+        );
+      } else {
+        it.filled_rectangle(163, 109, 152, 46, id(color_apex_border));
+        it.filled_rectangle(166, 112, 146, 40, id(color_apex_button));
+        it.rectangle(166, 112, 146, 40, id(color_apex_outline));
+        it.printf(
+          239,
+          124,
+          id(font_button),
+          id(color_black_text),
+          TextAlign::TOP_CENTER,
+          "APEX D"
+        );
+      }
 
       if (fusion_active) {
+        it.filled_rectangle(5, 157, 152, 46, id(color_cancel_border));
         it.filled_rectangle(8, 160, 146, 40, id(color_cancel));
         it.rectangle(8, 160, 146, 40, id(color_cancel_outline));
         it.printf(
@@ -617,6 +1027,7 @@ display:
           "FUSION CANCEL"
         );
       } else {
+        it.filled_rectangle(5, 157, 152, 46, id(color_fusion_border));
         it.filled_rectangle(8, 160, 146, 40, id(color_fusion_button));
         it.rectangle(8, 160, 146, 40, id(color_fusion_outline));
         it.printf(
@@ -629,6 +1040,7 @@ display:
         );
       }
 
+      it.filled_rectangle(163, 157, 152, 46, id(color_cancel_border));
       it.filled_rectangle(166, 160, 146, 40, id(color_cancel));
       it.rectangle(166, 160, 146, 40, id(color_cancel_outline));
       it.printf(
@@ -640,23 +1052,119 @@ display:
         "APEX CANCEL"
       );
 
+      const bool touch_flash_active =
+          (int32_t) (id(button_flash_until_ms) - millis()) > 0;
+
+      if (touch_flash_active) {
+        if (id(button_flash_action) == 1) {
+          if (fusion_active) {
+            it.filled_rectangle(5, 157, 152, 46, id(color_cancel_pressed_outline));
+            it.filled_rectangle(8, 160, 146, 40, id(color_cancel_pressed_fill));
+            it.rectangle(8, 160, 146, 40, id(color_cancel_pressed_outline));
+            it.printf(
+              81,
+              172,
+              id(font_button),
+              id(color_cancel_pressed_text),
+              TextAlign::TOP_CENTER,
+              "FUSION CANCEL"
+            );
+          } else {
+            it.filled_rectangle(5, 157, 152, 46, id(color_fusion_pressed_outline));
+            it.filled_rectangle(8, 160, 146, 40, id(color_fusion_pressed_fill));
+            it.rectangle(8, 160, 146, 40, id(color_fusion_pressed_outline));
+            it.printf(
+              81,
+              172,
+              id(font_button),
+              id(color_fusion_pressed_text),
+              TextAlign::TOP_CENTER,
+              "FUSION 15"
+            );
+          }
+        } else if (id(button_flash_action) == 2) {
+          it.filled_rectangle(5, 61, 152, 46, id(color_apex_pressed_outline));
+          it.filled_rectangle(8, 64, 146, 40, id(color_apex_pressed_fill));
+          it.rectangle(8, 64, 146, 40, id(color_apex_pressed_outline));
+          it.printf(
+            81,
+            76,
+            id(font_button),
+            id(color_apex_pressed_text),
+            TextAlign::TOP_CENTER,
+            "APEX A"
+          );
+        } else if (id(button_flash_action) == 3) {
+          it.filled_rectangle(163, 61, 152, 46, id(color_apex_pressed_outline));
+          it.filled_rectangle(166, 64, 146, 40, id(color_apex_pressed_fill));
+          it.rectangle(166, 64, 146, 40, id(color_apex_pressed_outline));
+          it.printf(
+            239,
+            76,
+            id(font_button),
+            id(color_apex_pressed_text),
+            TextAlign::TOP_CENTER,
+            "APEX B"
+          );
+        } else if (id(button_flash_action) == 4) {
+          it.filled_rectangle(5, 109, 152, 46, id(color_apex_pressed_outline));
+          it.filled_rectangle(8, 112, 146, 40, id(color_apex_pressed_fill));
+          it.rectangle(8, 112, 146, 40, id(color_apex_pressed_outline));
+          it.printf(
+            81,
+            124,
+            id(font_button),
+            id(color_apex_pressed_text),
+            TextAlign::TOP_CENTER,
+            "APEX C"
+          );
+        } else if (id(button_flash_action) == 5) {
+          it.filled_rectangle(163, 109, 152, 46, id(color_apex_pressed_outline));
+          it.filled_rectangle(166, 112, 146, 40, id(color_apex_pressed_fill));
+          it.rectangle(166, 112, 146, 40, id(color_apex_pressed_outline));
+          it.printf(
+            239,
+            124,
+            id(font_button),
+            id(color_apex_pressed_text),
+            TextAlign::TOP_CENTER,
+            "APEX D"
+          );
+        } else if (id(button_flash_action) == 6) {
+          it.filled_rectangle(163, 157, 152, 46, id(color_cancel_pressed_outline));
+          it.filled_rectangle(166, 160, 146, 40, id(color_cancel_pressed_fill));
+          it.rectangle(166, 160, 146, 40, id(color_cancel_pressed_outline));
+          it.printf(
+            239,
+            172,
+            id(font_button),
+            id(color_cancel_pressed_text),
+            TextAlign::TOP_CENTER,
+            "APEX CANCEL"
+          );
+        }
+      }
+
       if (!show_alert) {
+        it.filled_rectangle(0, 206, 320, 34, id(color_idle_footer_fill));
+        it.rectangle(0, 206, 320, 34, id(color_idle_footer_border));
+
         if (id(status_message).empty()) {
           it.printf(
             160,
-            214,
+            223,
             id(font_message),
-            id(color_white_text),
-            TextAlign::TOP_CENTER,
+            id(color_idle_footer_text),
+            TextAlign::CENTER,
             "SELECT FEED ACTION"
           );
         } else {
           it.printf(
             160,
-            214,
+            223,
             id(font_message),
             id(color_footer_sent),
-            TextAlign::TOP_CENTER,
+            TextAlign::CENTER,
             "%s",
             id(status_message).c_str()
           );
@@ -703,8 +1211,6 @@ touchscreen:
     update_interval: 50ms
     threshold: 400
     calibration:
-      # These values worked on the original build.
-      # Your CYD may require calibration adjustments.
       x_min: 280
       x_max: 3860
       y_min: 340
@@ -713,11 +1219,37 @@ touchscreen:
     on_touch:
       - if:
           condition:
-            lambda: "return !id(touch_latched);"
+            lambda: 'return !id(touch_latched);'
           then:
             - lambda: |-
                 id(touch_latched) = true;
                 id(touch_action) = 0;
+
+                auto now = id(ha_time).now();
+                bool night_mode = false;
+
+                if (now.is_valid()) {
+                  int minutes_now = now.hour * 60 + now.minute;
+
+                  night_mode =
+                      minutes_now >= (23 * 60) ||
+                      minutes_now < (10 * 60);
+                }
+
+                if (night_mode) {
+                  id(screen_wake_until_ms) = millis() + 60000;
+                }
+
+                if (id(screen_is_dim)) {
+                  id(screen_is_dim) = false;
+                  id(touch_action) = 99;
+
+                  auto call = id(screen_backlight).turn_on();
+                  call.set_brightness(1.0f);
+                  call.perform();
+
+                  return;
+                }
 
                 int px = (touch.y_raw - 530) * 320 / (3294 - 530);
                 int py = (touch.x_raw - 736) * 240 / (3348 - 736);
@@ -758,6 +1290,12 @@ touchscreen:
                   }
                 }
 
+                if (id(touch_action) >= 1 &&
+                    id(touch_action) <= 6) {
+                  id(button_flash_action) = id(touch_action);
+                  id(button_flash_until_ms) = millis() + 350;
+                }
+
             - if:
                 condition:
                   lambda: |-
@@ -776,31 +1314,31 @@ touchscreen:
 
             - if:
                 condition:
-                  lambda: "return id(touch_action) == 2;"
+                  lambda: 'return id(touch_action) == 2;'
                 then:
                   - script.execute: run_apex_feed_a
 
             - if:
                 condition:
-                  lambda: "return id(touch_action) == 3;"
+                  lambda: 'return id(touch_action) == 3;'
                 then:
                   - script.execute: run_apex_feed_b
 
             - if:
                 condition:
-                  lambda: "return id(touch_action) == 4;"
+                  lambda: 'return id(touch_action) == 4;'
                 then:
                   - script.execute: run_apex_feed_c
 
             - if:
                 condition:
-                  lambda: "return id(touch_action) == 5;"
+                  lambda: 'return id(touch_action) == 5;'
                 then:
                   - script.execute: run_apex_feed_d
 
             - if:
                 condition:
-                  lambda: "return id(touch_action) == 6;"
+                  lambda: 'return id(touch_action) == 6;'
                 then:
                   - script.execute: run_apex_cancel
 
