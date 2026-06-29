@@ -1,24 +1,30 @@
-# Optional Home Assistant package:
-# Fusion-style 15-minute feed mode with staged equipment restoration.
+# Optional Home Assistant-managed 15-minute feed workflow.
 #
-# Install as a Home Assistant package, or split the timer/script/automation
-# sections into the matching areas of your own YAML configuration.
-#
-# Replace the example switch entity IDs below with your own.
+# This example:
+#   1. Turns the return pump, UV, and skimmer OFF.
+#   2. Starts a 15-minute timer.
+#   3. On normal timer completion or manual cancel:
+#      - turns the return pump ON
+#      - turns the UV ON
+#      - waits one minute
+#      - turns the skimmer ON
 #
 # IMPORTANT:
-# This example explicitly turns equipment ON during restore.
-# It does NOT preserve arbitrary equipment states from before feed mode began.
+# This is not a true state snapshot-and-restore workflow.
+# The restore script explicitly turns the configured equipment ON.
+# Do not use this unchanged if any of those devices may intentionally
+# be OFF before a feed cycle starts.
 
 timer:
   fusion_feed_15:
     name: Fusion Feed 15
     duration: "00:15:00"
+    restore: false
 
 script:
   fusion_15_start:
     alias: Fusion 15 - Start
-    description: Turn off feed equipment and start the Fusion 15 timer.
+    description: Turns off feed equipment and starts the 15-minute Fusion timer.
     mode: single
     sequence:
       - action: switch.turn_off
@@ -27,15 +33,33 @@ script:
             - switch.return_pump
             - switch.uv_lamp
             - switch.skimmer
+
       - action: timer.start
         target:
           entity_id: timer.fusion_feed_15
         data:
           duration: "00:15:00"
 
+  fusion_15_cancel:
+    alias: Fusion 15 - Cancel
+    description: Cancels Fusion 15 and restores equipment in the normal restart order.
+    mode: single
+    sequence:
+      - action: timer.cancel
+        target:
+          entity_id: timer.fusion_feed_15
+
+      - action: script.turn_off
+        target:
+          entity_id: script.fusion_15_restore_equipment
+
+      - action: script.turn_on
+        target:
+          entity_id: script.fusion_15_restore_equipment
+
   fusion_15_restore_equipment:
     alias: Fusion 15 - Restore Equipment
-    description: Restore return and UV, wait one minute, then restore skimmer.
+    description: Restores return and UV, waits one minute, then restores skimmer.
     mode: restart
     sequence:
       - action: switch.turn_on
@@ -43,30 +67,16 @@ script:
           entity_id:
             - switch.return_pump
             - switch.uv_lamp
+
       - delay: "00:01:00"
+
       - action: switch.turn_on
         target:
           entity_id: switch.skimmer
 
-  fusion_15_cancel:
-    alias: Fusion 15 - Cancel
-    description: Cancel the timer and restart the normal staged restore sequence.
-    mode: single
-    sequence:
-      - action: timer.cancel
-        target:
-          entity_id: timer.fusion_feed_15
-      - action: script.turn_off
-        target:
-          entity_id: script.fusion_15_restore_equipment
-      - action: script.turn_on
-        target:
-          entity_id: script.fusion_15_restore_equipment
-
 automation:
-  - alias: Fusion 15 - Restore Equipment When Timer Finishes
-    id: fusion_15_restore_equipment_when_timer_finishes
-    description: Run the staged restore sequence when Fusion Feed ends naturally.
+  - alias: Fusion 15 - Timer Finished
+    description: Starts the staged equipment restore when the Fusion 15 timer expires.
     mode: single
     triggers:
       - trigger: event
