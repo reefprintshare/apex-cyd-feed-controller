@@ -8,8 +8,8 @@
 #
 # with an "outlet" attribute containing the parsed Apex status.xml outlet list.
 #
-# Change or remove the optional TridentBusy and SOW8 mappings below
-# to match your own Apex virtual outputs.
+# Change or remove the optional TridentBusy, SOW8, WaterChange,
+# OutageMode, and Return_Pump mappings below to match your own Apex setup.
 
 template:
   - triggers:
@@ -28,6 +28,47 @@ template:
           {% else %}
             0
           {% endif %}
+
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/1"
+      - trigger: state
+        entity_id: script.fusion_15_restore_equipment
+    sensor:
+      - name: "Fusion 15 Restore Remaining Seconds"
+        unique_id: fusion_15_restore_remaining_seconds
+        unit_of_measurement: s
+        state: >
+          {% if is_state('script.fusion_15_restore_equipment', 'on') %}
+            {% set started = as_timestamp(states.script.fusion_15_restore_equipment.last_changed) %}
+            {{ [0, 60 - (as_timestamp(now()) - started) | round(0)] | max }}
+          {% else %}
+            0
+          {% endif %}
+
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/1"
+    sensor:
+      - name: "Apex Feed Status Age"
+        unique_id: apex_feed_status_age
+        unit_of_measurement: s
+        state: >
+          {% set last = states.sensor.apex_feed_status.last_reported %}
+          {% if last %}
+            {{ [0, (as_timestamp(now()) - as_timestamp(last)) | round(0)] | max }}
+          {% else %}
+            9999
+          {% endif %}
+
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/5"
+    sensor:
+      - name: "Apex CYD Heartbeat"
+        unique_id: apex_cyd_heartbeat
+        unit_of_measurement: s
+        state: "{{ as_timestamp(now()) | int }}"
 
   - sensor:
       - name: "Apex CYD Alerts"
@@ -66,13 +107,24 @@ template:
             {% set name = outlet.get('name', '') %}
             {% set state = outlet.get('state', '') %}
 
-            {% if state in ['AON', 'ON'] %}
+            {# Literal OFF means manually forced OFF.
+               AOF means Apex program logic has it Auto Off. #}
+            {% if name == 'Return_Pump' and state == 'OFF' %}
+              {% set ns.alarms = ns.alarms + ['A:RETURN PUMP MANUALLY OFF'] %}
 
-              {# Optional schedule/virtual-output status example. #}
-              {% if name == 'TridentBusy' %}
+            {% elif state in ['AON', 'ON'] %}
+              {% if name == 'WaterChange' %}
+                {% set ns.blue_infos = ns.blue_infos + ['B:WATER CHANGE ACTIVE'] %}
+
+              {% elif name == 'OutageMode' %}
+                {% set ns.blue_infos = ns.blue_infos + ['B:OUTAGE MODE ACTIVE'] %}
+
+              {# Optional schedule or virtual-output status example.
+                 This is not confirmed direct Trident telemetry. #}
+              {% elif name == 'TridentBusy' %}
                 {% set ns.infos = ns.infos + ['I:TRIDENT TESTING'] %}
 
-              {# Optional pump/virtual-output status example. #}
+              {# Optional pump or virtual-output status example. #}
               {% elif name == 'SOW8' %}
                 {% set ns.blue_infos = ns.blue_infos + ['B:SOW WAVEMAKER RUNNING'] %}
 
